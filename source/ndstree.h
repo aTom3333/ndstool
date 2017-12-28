@@ -1,9 +1,23 @@
+#include <cctype>
+
+
 inline int cmp(char *a, bool a_isdir, char *b, bool b_isdir)
 {
 	// oh... directory sort doesn't matter since we write out dir- and filenames seperately
 	//if (a_isdir && !b_isdir) return -1;
 	//if (b_isdir && !a_isdir) return +1;
-	return strcmp(a, b);
+	char* tempa = new char[strlen(a)+1];
+	strcpy(tempa, a);
+	for(int i = 0; i < strlen(tempa); i++)
+		tempa[i] = tolower(tempa[i]);
+	char* tempb = new char[strlen(b)+1];
+	strcpy(tempb, b);
+	for(int i = 0; i < strlen(tempb); i++)
+		tempb[i] = tolower(tempb[i]);
+	int retour = strcmp(tempa, tempb);
+	delete[] tempa;
+	delete[] tempb;
+	return retour;
 }
 
 struct TreeNode

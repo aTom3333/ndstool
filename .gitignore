@@ -18,3 +18,5 @@ missing
 *.status
 *.exe
 ndstool
+.idea/
+cmake-build-debug/

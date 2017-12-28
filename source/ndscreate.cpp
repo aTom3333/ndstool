@@ -168,6 +168,7 @@ void AddFile(const char *rootdir, const char *prefix, const char *entry_name, un
 		unsigned int size2 = (size >= sizeof_copybuf) ? sizeof_copybuf : size;
 		fread(copybuf, 1, size2, fi);
 		fwrite(copybuf, 1, size2, fNDS);
+        fflush(fNDS);
 		size -= size2;
 	}
 	delete [] copybuf;
@@ -176,10 +177,13 @@ void AddFile(const char *rootdir, const char *prefix, const char *entry_name, un
 
 	// write fat
 	fseek(fNDS, header.fat_offset + 8*file_id, SEEK_SET);
+    fflush(fNDS);
 	unsigned_int top = file_top;
 	fwrite(&top, 1, sizeof(top), fNDS);
+    fflush(fNDS);
 	unsigned_int bottom = file_bottom;
 	fwrite(&bottom, 1, sizeof(bottom), fNDS);
+    fflush(fNDS);
 
 	file_top = file_bottom;
 }
@@ -204,6 +208,7 @@ void AddDirectory(TreeNode *node, const char *prefix, unsigned int this_dir_id, 
 	fwrite(&top_file_id, 1, sizeof(top_file_id), fNDS);
 	unsigned_short parent_id = _parent_id;	// ID of parent directory or directory count (root)
 	fwrite(&parent_id, 1, sizeof(parent_id), fNDS);
+    fflush(fNDS);
 
 	//printf("dir %X file_id %u +\n", this_dir_id, (int)top_file_id);
 
@@ -220,6 +225,7 @@ void AddDirectory(TreeNode *node, const char *prefix, unsigned int this_dir_id, 
 				int namelen = strlen(t->name);
 				fputc(t->directory ? namelen | 128 : namelen, fNDS); _entry_start += 1;
 				fwrite(t->name, 1, namelen, fNDS); _entry_start += namelen;
+                fflush(fNDS);
 
 				//printf("[ %s -> %u ]\n", t->name, free_file_id);
 
@@ -237,6 +243,7 @@ void AddDirectory(TreeNode *node, const char *prefix, unsigned int this_dir_id, 
 				int namelen = strlen(t->name);
 				fputc(t->directory ? namelen | 128 : namelen, fNDS); _entry_start += 1;
 				fwrite(t->name, 1, namelen, fNDS); _entry_start += namelen;
+                fflush(fNDS);
 
 				//printf("[ %s -> %X ]\n", t->name, t->dir_id);
 
@@ -450,14 +457,26 @@ void Create()
 		header.arm9_size = header.arm9_size + ((size + 3) &~ 3);
 	}
 
+    fflush(fNDS);
+
 	// ARM9 overlay table
 	if (arm9ovltablefilename)
 	{
+        /*
 		unsigned_int x1 = 0xDEC00621; fwrite(&x1, sizeof(x1), 1, fNDS);		// 0x2106c0de magic
 		unsigned_int x2 = 0x00000AD8; fwrite(&x2, sizeof(x2), 1, fNDS);		// ???
 		unsigned_int x3 = 0x00000000; fwrite(&x3, sizeof(x3), 1, fNDS);		// ???
+        */
+		// Modif de moi
+		if(!header.arm9_overlay_offset)
+			header.arm9_overlay_offset = ftell(fNDS);		// do not align
 
-		header.arm9_overlay_offset = ftell(fNDS);		// do not align
+        while(ftell(fNDS) < header.arm9_overlay_offset)
+        {
+            unsigned char temp = 0xFF;
+            fwrite(&temp, 1, 1, fNDS);
+        }
+
 		fseek(fNDS, header.arm9_overlay_offset, SEEK_SET);
 		unsigned int size = 0;
 		CopyFromBin(arm9ovltablefilename, &size);
@@ -466,8 +485,59 @@ void Create()
 		if (!size) header.arm9_overlay_offset = 0;
 	}
 
+    fflush(fNDS);
+
 	// COULD BE HERE: ARM9 overlay files, no padding before or between. end is padded with 0xFF's and then followed by ARM7 binary
 	// fseek(fNDS, 1388772, SEEK_CUR);		// test for ASME
+
+    // Mon propre code
+    for(int i = 0; i < overlay_files; ++i)
+    {
+        char filename[MAXPATHLEN] = "";
+        char filename2[MAXPATHLEN];
+        strcat(filename, overlaydir);
+        strcat(filename, "/");
+        sprintf(filename2, OVERLAY_FMT, i);
+        strcat(filename, filename2);
+
+        FILE* overlay_file = fopen(filename, "rb");
+        if(!overlay_file) {fprintf(stderr, "Can't read file '%s'.\n", filename); exit(1);}
+        fseek(overlay_file, 0, SEEK_END);
+        unsigned int size = ftell(overlay_file);
+        fseek(overlay_file, 0, SEEK_SET);
+
+        unsigned_int top = ftell(fNDS);
+        unsigned_int bottom = top + size;
+
+        // write data
+        unsigned int sizeof_copybuf = 256*1024;
+        unsigned char *copybuf = new unsigned char [sizeof_copybuf];
+        while (size > 0)
+        {
+            unsigned int size2 = (size >= sizeof_copybuf) ? sizeof_copybuf : size;
+            fread(copybuf, 1, size2, overlay_file);
+            fwrite(copybuf, 1, size2, fNDS);
+            size -= size2;
+        }
+        delete [] copybuf;
+        fclose(overlay_file);
+
+        // write fat
+        fseek(fNDS, header.fat_offset + 8*i, SEEK_SET);
+        fwrite(&top, 1, sizeof(top), fNDS);
+        fwrite(&bottom, 1, sizeof(bottom), fNDS);
+
+        // On retourne à la fin du fihier qu'on vient d'écrire pour le suivant
+        fseek(fNDS, bottom, SEEK_SET);
+
+        while(ftell(fNDS) % 0x200 != 0)
+        {
+            unsigned char temp = 0xFF;
+            fwrite(&temp, 1, 1, fNDS);
+        }
+    }
+
+    fflush(fNDS);
 
 	// ARM7 binary
 	header.arm7_rom_offset = (ftell(fNDS) + arm7_align) &~ arm7_align;
@@ -493,6 +563,8 @@ void Create()
 		header.arm7_size = ((size + 3) &~ 3);
 	}
 
+    fflush(fNDS);
+
 	// ARM7 overlay table
 	if (arm7ovltablefilename)
 	{
@@ -505,6 +577,8 @@ void Create()
 		if (!size) header.arm7_overlay_offset = 0;
 	}
 
+    fflush(fNDS);
+
 	// COULD BE HERE: probably ARM7 overlay files, just like for ARM9
 	//
 
@@ -513,6 +587,12 @@ void Create()
 		fprintf(stderr, "Overlay directory required!.\n");
 		exit(1);
 	}
+
+    while(ftell(fNDS) % 0x200 != 0)
+    {
+        unsigned char temp = 0xFF;
+        fwrite(&temp, 1, 1, fNDS);
+    }
 
 	// filesystem
 	//if (filerootdir || overlaydir)
@@ -571,15 +651,19 @@ void Create()
 			header.banner_offset = 0;
 		}
 
+        fflush(fNDS);
+
 		file_end = file_top;	// no file data as yet
 
 		// add (hidden) overlay files
+        /* Inutile c    r fait précédement
 		for (unsigned int i=0; i<overlay_files; i++)
 		{
-			char s[32]; sprintf(s, OVERLAY_FMT, i/*free_file_id*/);
-			AddFile(overlaydir, "/", s, i/*free_file_id*/);
+            // On donne
+			char s[32]; sprintf(s, OVERLAY_FMT, i);//free_file_id
+			AddFile(overlaydir, "/", s, i);//free_file_id
 			//free_file_id++;		// incremented up to overlay_files
-		}
+		}*/
 
 		// add all other (visible) files
 		AddDirectory(filetree, "/", 0xF000, directory_count);
@@ -688,8 +772,8 @@ void Create()
 		}
 	}
 
-	header.rom_control_info1 = 0x00586000;
-	header.rom_control_info2 = 0x001808F8;
+	//header.rom_control_info1 = 0x00586000;
+	//header.rom_control_info2 = 0x001808F8;
 
 	// Set flags in DSi extended header
 	if (header.unitcode & 2)

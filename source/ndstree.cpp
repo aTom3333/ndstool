@@ -1,5 +1,8 @@
 #include "ndstool.h"
 #include "ndstree.h"
+#include <vector>
+#include <algorithm>
+
 
 /*
  * Variables
@@ -26,7 +29,23 @@ TreeNode *ReadDirectory(TreeNode *node, char *path)
 	if (!dir) { fprintf(stderr, "Cannot open directory '%s'.\n", path); exit(1); }
 
 	struct dirent *de;
+	std::vector<dirent*> rep;
 	while ((de = readdir(dir)))
+		rep.push_back(de);
+
+	std::sort(rep.begin(), rep.end(), [](dirent* a, dirent* b) {
+		char* tempa = strdup(a->d_name);
+		for(int i = 0; i < strlen(tempa); i++)
+			tempa[i] = tolower(tempa[i]);
+		char* tempb = strdup(b->d_name);
+		for(int i = 0; i < strlen(tempb); i++)
+			tempb[i] = tolower(tempb[i]);
+		bool retour = strcmp(tempa, tempb) < 0;
+		free(tempa); free(tempb);
+		return retour;
+	});
+
+	for(dirent* de : rep)
 	{
 		if (!strncmp(de->d_name, ".", 1)) continue; // exclude all directories starting with .
 
@@ -64,5 +83,6 @@ TreeNode *ReadDirectory(TreeNode *node, char *path)
 	closedir(dir);
 
 	while (node->prev) node = node->prev;	// return first
+
 	return node;
 }
